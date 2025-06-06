@@ -83,6 +83,30 @@
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a, b)	(-EINVAL)
 #endif
+#if 0
+/*
+ * POTENTIAL INTEGER OVERFLOW BUG LOCATION (hypothesis):
+ *
+ * One area of concern for integer overflow in syscalls is in memory allocation syscalls, where
+ * user-supplied values are used to compute allocation sizes. In particular, syscalls that allocate
+ * memory based on user input, such as sys_mmap or sys_brk, may be susceptible if the size
+ * calculation can overflow a 32-bit or 64-bit integer, wrapping to a small value and leading to
+ * insufficient allocation or buffer overflows.
+ *
+ * Example candidate: sys_mmap (see mm/mmap.c) or sys_brk (see mm/mmap.c), where the length or increment
+ * parameter is user-controlled and used in arithmetic for allocation or address calculation.
+ *
+ * Call graph hypothesis for sys_mmap:
+ *   - Userland calls mmap syscall (sys_mmap)
+ *   - sys_mmap takes user-supplied length and offset
+ *   - These values are used in arithmetic to compute the size of the mapping
+ *   - If the sum or product overflows, the resulting allocation may be smaller than intended
+ *   - This value is eventually passed to functions like do_mmap or vm_mmap_pgoff, which may call kmalloc or similar
+ *
+ * This is a location to investigate for potential integer overflow bugs, especially if there are
+ * insufficient checks on the user-supplied size or offset values before arithmetic is performed.
+ */
+#endif
 #ifndef GET_UNALIGN_CTL
 # define GET_UNALIGN_CTL(a, b)	(-EINVAL)
 #endif
