@@ -173,11 +173,7 @@ EXPORT_SYMBOL(overflowgid);
 /*
  * the same as above, but for filesystems which can only store a 16-bit
  * UID and GID. as such, this is needed on all architectures
- *
- * Prevent integer overflow on 16-bit values.
  */
-
-#define UID16_MAX 65535
 
 int fs_overflowuid = DEFAULT_FS_OVERFLOWUID;
 int fs_overflowgid = DEFAULT_FS_OVERFLOWGID;
