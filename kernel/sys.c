@@ -83,6 +83,30 @@
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a, b)	(-EINVAL)
 #endif
+#if 0
+/*
+ * POTENTIAL INTEGER OVERFLOW BUG LOCATION (hypothesis):
+ *
+ * One area of concern for integer overflow in syscalls is in memory allocation syscalls, where
+ * user-supplied values are used to compute allocation sizes. In particular, syscalls that allocate
+ * memory based on user input, such as sys_mmap or sys_brk, may be susceptible if the size
+ * calculation can overflow a 32-bit or 64-bit integer, wrapping to a small value and leading to
+ * insufficient allocation or buffer overflows.
+ *
+ * Example candidate: sys_mmap (see mm/mmap.c) or sys_brk (see mm/mmap.c), where the length or increment
+ * parameter is user-controlled and used in arithmetic for allocation or address calculation.
+ *
+ * Call graph hypothesis for sys_mmap:
+ *   - Userland calls mmap syscall (sys_mmap)
+ *   - sys_mmap takes user-supplied length and offset
+ *   - These values are used in arithmetic to compute the size of the mapping
+ *   - If the sum or product overflows, the resulting allocation may be smaller than intended
+ *   - This value is eventually passed to functions like do_mmap or vm_mmap_pgoff, which may call kmalloc or similar
+ *
+ * This is a location to investigate for potential integer overflow bugs, especially if there are
+ * insufficient checks on the user-supplied size or offset values before arithmetic is performed.
+ */
+#endif
 #ifndef GET_UNALIGN_CTL
 # define GET_UNALIGN_CTL(a, b)	(-EINVAL)
 #endif
@@ -177,8 +201,8 @@ EXPORT_SYMBOL(overflowgid);
 
 int fs_overflowuid = DEFAULT_FS_OVERFLOWUID;
 int fs_overflowgid = DEFAULT_FS_OVERFLOWGID;
-
 EXPORT_SYMBOL(fs_overflowuid);
+EXPORT_SYMBOL(fs_overflowgid);
 EXPORT_SYMBOL(fs_overflowgid);
 
 /*
@@ -439,7 +463,11 @@ error:
 
 SYSCALL_DEFINE2(setregid, gid_t, rgid, gid_t, egid)
 {
-	return __sys_setregid(rgid, egid);
+       /* Prevent 16-bit overflow for rgid and egid */
+       if ((rgid != (gid_t)-1 && (rgid < 0 || rgid > UID16_MAX)) ||
+           (egid != (gid_t)-1 && (egid < 0 || egid > UID16_MAX)))
+               return -EINVAL;
+       return __sys_setregid(rgid, egid);
 }
 
 /*
@@ -449,38 +477,42 @@ SYSCALL_DEFINE2(setregid, gid_t, rgid, gid_t, egid)
  */
 long __sys_setgid(gid_t gid)
 {
-	struct user_namespace *ns = current_user_ns();
-	const struct cred *old;
-	struct cred *new;
-	int retval;
-	kgid_t kgid;
+       struct user_namespace *ns = current_user_ns();
+       const struct cred *old;
+       struct cred *new;
+       int retval;
+       kgid_t kgid;
 
-	kgid = make_kgid(ns, gid);
-	if (!gid_valid(kgid))
-		return -EINVAL;
+       /* Prevent 16-bit overflow for gid */
+       if (gid != (gid_t)-1 && (gid < 0 || gid > UID16_MAX))
+               return -EINVAL;
 
-	new = prepare_creds();
-	if (!new)
-		return -ENOMEM;
-	old = current_cred();
+       kgid = make_kgid(ns, gid);
+       if (!gid_valid(kgid))
+               return -EINVAL;
 
-	retval = -EPERM;
-	if (ns_capable_setid(old->user_ns, CAP_SETGID))
-		new->gid = new->egid = new->sgid = new->fsgid = kgid;
-	else if (gid_eq(kgid, old->gid) || gid_eq(kgid, old->sgid))
-		new->egid = new->fsgid = kgid;
-	else
-		goto error;
+       new = prepare_creds();
+       if (!new)
+               return -ENOMEM;
+       old = current_cred();
 
-	retval = security_task_fix_setgid(new, old, LSM_SETID_ID);
-	if (retval < 0)
-		goto error;
+       retval = -EPERM;
+       if (ns_capable_setid(old->user_ns, CAP_SETGID))
+               new->gid = new->egid = new->sgid = new->fsgid = kgid;
+       else if (gid_eq(kgid, old->gid) || gid_eq(kgid, old->sgid))
+               new->egid = new->fsgid = kgid;
+       else
+               goto error;
 
-	return commit_creds(new);
+       retval = security_task_fix_setgid(new, old, LSM_SETID_ID);
+       if (retval < 0)
+               goto error;
+
+       return commit_creds(new);
 
 error:
-	abort_creds(new);
-	return retval;
+       abort_creds(new);
+       return retval;
 }
 
 SYSCALL_DEFINE1(setgid, gid_t, gid)
